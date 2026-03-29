@@ -6,52 +6,25 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+import type { ReactCompilerReport } from "@react-compiler-marker/server/src/report";
+import { buildReportTree } from "@react-compiler-marker/server/src/report";
+import { ReportPanel } from "./report/ReportPanel";
+import { ReportItem, ReportsTreeProvider } from "./sidebar/ReportsTreeProvider";
 
 let client: LanguageClient;
 
 // Output channel for logging
 const outputChannel = vscode.window.createOutputChannel("React Compiler Marker ✨");
 
-interface ReactCompilerReport {
-  generatedAt: string;
-  totals: {
-    filesScanned: number;
-    filesWithResults: number;
-    compiledFiles: number;
-    failedFiles: number;
-    successCount: number;
-    failedCount: number;
-  };
-  files: Array<{
-    path: string;
-    success: unknown[];
-    failed: unknown[];
-  }>;
-  errors: Array<{
-    path: string;
-    message: string;
-  }>;
-}
-
 function logMessage(message: string): void {
   const timestamp = new Date().toISOString();
   outputChannel.appendLine(`[${timestamp}] CLIENT LOG: ${message}`);
 }
 
-// IDE detection helpers for "Fix with AI" command routing
-function isVSCode(): boolean {
-  const appName = vscode.env.appName;
-  return (
-    appName.includes("Visual Studio Code") ||
-    appName.includes("VSCode") ||
-    appName.includes("VS Code")
-  );
-}
-
 // Antigravity is an AI-focused VS Code fork (https://antigravity.dev)
 function isAntigravity(): boolean {
   const appName = vscode.env.appName;
-  return appName.includes("Antigravity");
+  return appName.toLowerCase().includes("antigravity");
 }
 
 function generateAIPrompt(
@@ -136,11 +109,102 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // Register commands
-  registerCommands(context, isActivated, (value: boolean) => {
-    isActivated = value;
-    context.globalState.update("isActivated", value);
+  // Set up sidebar tree view
+  const storageUri = context.storageUri ?? context.globalStorageUri;
+  const reportsProvider = new ReportsTreeProvider(storageUri);
+  const treeView = vscode.window.createTreeView("react-compiler-marker.reportsView", {
+    treeDataProvider: reportsProvider,
   });
+  context.subscriptions.push(treeView);
+
+  // Load reports and set initial badge
+  reportsProvider.refresh().then(() => {
+    const failedCount = reportsProvider.getLatestFailedCount();
+    treeView.badge =
+      failedCount > 0
+        ? { value: failedCount, tooltip: `${failedCount} failed component(s) in latest report` }
+        : undefined;
+  });
+
+  const updateBadge = () => {
+    const failedCount = reportsProvider.getLatestFailedCount();
+    treeView.badge =
+      failedCount > 0
+        ? { value: failedCount, tooltip: `${failedCount} failed component(s) in latest report` }
+        : undefined;
+  };
+
+  // Register commands
+  registerCommands(
+    context,
+    isActivated,
+    (value: boolean) => {
+      isActivated = value;
+      context.globalState.update("isActivated", value);
+    },
+    async () => {
+      await reportsProvider.refresh();
+      updateBadge();
+    }
+  );
+
+  // Register refreshReports command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("react-compiler-marker.refreshReports", async () => {
+      await reportsProvider.refresh();
+      updateBadge();
+    })
+  );
+
+  // Register openReport command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "react-compiler-marker.openReport",
+      async (reportUri: vscode.Uri) => {
+        try {
+          const content = await vscode.workspace.fs.readFile(reportUri);
+          const report = JSON.parse(Buffer.from(content).toString("utf8")) as ReactCompilerReport;
+          const treeData = buildReportTree(report);
+          const config = vscode.workspace.getConfiguration("reactCompilerMarker");
+          const emojis = {
+            success: config.get<string>("successEmoji") ?? "\u2728",
+            error: config.get<string>("errorEmoji") ?? "\uD83D\uDEAB",
+          };
+          const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+          if (!workspaceFolder) {
+            vscode.window.showErrorMessage("Open a workspace folder to view the report.");
+            return;
+          }
+          ReportPanel.createOrShow(workspaceFolder.uri, treeData, emojis);
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Failed to open report: ${error?.message ?? error}`);
+        }
+      }
+    )
+  );
+
+  // Register deleteReport command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "react-compiler-marker.deleteReport",
+      async (item: ReportItem) => {
+        const confirm = await vscode.window.showWarningMessage(
+          "Are you sure you want to delete this report?",
+          { modal: true },
+          "Delete"
+        );
+        if (confirm !== "Delete") {
+          return;
+        }
+        try {
+          await reportsProvider.deleteReport(item.reportUri);
+          updateBadge();
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Failed to delete report: ${error?.message ?? error}`);
+        }
+      }
+    )
+  );
 
   logMessage("React Compiler Marker ✨: Initialization complete.");
 }
@@ -148,7 +212,8 @@ export function activate(context: vscode.ExtensionContext): void {
 function registerCommands(
   context: vscode.ExtensionContext,
   initialIsActivated: boolean,
-  setIsActivated: (value: boolean) => void
+  setIsActivated: (value: boolean) => void,
+  onReportGenerated?: () => Promise<void>
 ): void {
   let isActivated = initialIsActivated;
 
@@ -313,26 +378,44 @@ function registerCommands(
             );
 
             try {
+              const config = vscode.workspace.getConfiguration("reactCompilerMarker");
               const result = (await client.sendRequest("workspace/executeCommand", {
                 command: "react-compiler-marker/generateReport",
-                arguments: [{ root: workspaceFolder?.uri.fsPath, reportId }],
+                arguments: [
+                  {
+                    root: workspaceFolder.uri.fsPath,
+                    reportId,
+                    excludeDirs: config.get<string[]>("excludedDirectories"),
+                    includeExtensions: config.get<string[]>("supportedExtensions"),
+                    respectGitignore: config.get<boolean>("respectGitignore"),
+                  },
+                ],
               })) as { success: boolean; report?: ReactCompilerReport; error?: string };
 
               if (!result.success || !result.report) {
                 throw new Error(result.error || "Report generation failed");
               }
 
+              // Save raw JSON for reference
               const reportJson = JSON.stringify(result.report, null, 2);
               const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
               const reportsDir = vscode.Uri.joinPath(storageBase, "react-compiler-marker");
               await vscode.workspace.fs.createDirectory(reportsDir);
               const reportUri = vscode.Uri.joinPath(reportsDir, `report-${timestamp}.json`);
               await vscode.workspace.fs.writeFile(reportUri, Buffer.from(reportJson, "utf8"));
-              const reportDoc = await vscode.workspace.openTextDocument(reportUri);
-              await vscode.window.showTextDocument(reportDoc, {
-                preview: true,
-                viewColumn: vscode.ViewColumn.Beside,
-              });
+
+              // Notify sidebar to refresh
+              if (onReportGenerated) {
+                await onReportGenerated();
+              }
+
+              // Open visual report panel
+              const treeData = buildReportTree(result.report);
+              const emojis = {
+                success: config.get<string>("successEmoji") ?? "✨",
+                error: config.get<string>("errorEmoji") ?? "🚫",
+              };
+              ReportPanel.createOrShow(workspaceFolder.uri, treeData, emojis);
             } finally {
               progressDisposable.dispose();
             }
@@ -402,9 +485,7 @@ function registerCommands(
 
       const prompt = generateAIPrompt(reason, code, filename, startLine, endLine);
 
-      if (isVSCode()) {
-        await vscode.commands.executeCommand("workbench.action.chat.open", prompt);
-      } else if (isAntigravity()) {
+      if (isAntigravity()) {
         await vscode.env.clipboard.writeText(prompt);
         await vscode.commands.executeCommand(
           "antigravity.prioritized.chat.openNewConversation",
@@ -412,9 +493,7 @@ function registerCommands(
         );
         await vscode.window.showInformationMessage("Prompt copied. Press CMD+V in the chat.");
       } else {
-        await vscode.env.clipboard.writeText(prompt);
-        await vscode.commands.executeCommand("composer.startComposerPrompt", prompt);
-        await vscode.window.showInformationMessage("Prompt copied. Press CMD+V in the chat.");
+        await vscode.commands.executeCommand("workbench.action.chat.open", prompt);
       }
     }
   );

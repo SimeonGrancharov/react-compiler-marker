@@ -2,12 +2,14 @@
 
 **Universal IDE extension that shows which React components are optimized by the [React Compiler](https://react.dev/learn/react-compiler)**. See at a glance which components get automatically memoized ✨ and which ones have issues preventing optimization 🚫
 
+![Showcase](images/showcase.png)
+
 ## Features
 
 - Visual emoji markers next to React components (customizable)
 - Hover tooltips with optimization details and error messages
 - Preview compiled output to see what the React Compiler generates
-- Generate JSON reports for a full-project compilation snapshot
+- Generate reports for a full-project compilation snapshot
 - Commands to activate/deactivate markers or check individual files
 - Configurable babel plugin path for custom setups
 
@@ -18,8 +20,7 @@
 | VS Code / Cursor | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=blazejkustra.react-compiler-marker) \| [Open VSX](https://open-vsx.org/extension/blazejkustra/react-compiler-marker) |
 | WebStorm / IntelliJ IDEA | [IntelliJ marketplace](https://plugins.jetbrains.com/plugin/29540-react-compiler-marker) |
 | Neovim | [Setup instructions](packages/nvim-client/README.md) |
-
-![Showcase](images/showcase.png)
+| Zed (alpha) | [Setup instructions](packages/zed-client/README.md) |
 
 ## Project Structure
 
@@ -27,27 +28,52 @@ This is a monorepo containing:
 
 ```
 packages/
+  cli/              # CLI for generating reports
   server/           # LSP server (shared by all clients)
   vscode-client/    # VS Code extension
   intellij-client/  # WebStorm/IntelliJ plugin
   nvim-client/      # Neovim plugin
+  zed-client/       # Zed extension
 ```
 
 Each client has its own version and release cycle. See individual READMEs for client-specific documentation:
 
+- [CLI](packages/cli/README.md)
 - [VS Code Client](packages/vscode-client/README.md)
 - [IntelliJ Client](packages/intellij-client/README.md)
 - [Neovim Client](packages/nvim-client/README.md)
+- [Zed Client](packages/zed-client/README.md)
 - [LSP Server](packages/server/README.md)
 
 ## Quick Start
+
+### CLI
+
+```bash
+npx react-compiler-marker
+```
+
+Generate a full-project report from the command line. Supports text, HTML, and JSON output formats.
+
+```bash
+# Text summary (default)
+npx react-compiler-marker .
+
+# Interactive HTML report
+npx react-compiler-marker --format html .
+
+# JSON for CI pipelines
+npx react-compiler-marker --format json . > report.json
+```
+
+See the [CLI README](packages/cli/README.md) for all options.
 
 ### VS Code / Cursor
 
 1. Install from [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=blazejkustra.react-compiler-marker) or search "React Compiler Marker" in Extensions
 3. Open a React component file - markers appear automatically
 
-### WebStorm / IntelliJ IDEA (beta)
+### WebStorm / IntelliJ IDEA
 
 1. Build the plugin: `cd packages/intellij-client && ./gradlew buildPlugin`
 2. Install from disk: Settings > Plugins > Install Plugin from Disk
@@ -72,29 +98,18 @@ Open a React component file - markers appear automatically.
 
 See the [Neovim Client README](packages/nvim-client/README.md) for configuration options and other package managers.
 
-## Configuration
+### Zed
 
-All clients support these settings:
+> **Note:** The Zed extension is not yet available in the Zed extension registry. For now, you need to download and install it manually.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Success Emoji | `✨` | Marker for optimized components |
-| Error Emoji | `🚫` | Marker for failed components |
-| Babel Plugin Path | `node_modules/babel-plugin-react-compiler` | Path to the compiler plugin |
-
-## Commands
-
-- **Activate Extension** - Enable markers
-- **Deactivate Extension** - Disable markers
-- **Check Current File** - Refresh markers in the active file
-- **Preview Compiled Output** - View the compiled code
-- **Generate Report** - Save a JSON report for the current workspace
+See the [Zed Client README](packages/zed-client/README.md) for installation and configuration options.
 
 ## Links
 
 - [GitHub Repository](https://github.com/blazejkustra/react-compiler-marker)
 - [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=blazejkustra.react-compiler-marker)
 - [Open VSX Registry](https://open-vsx.org/extension/blazejkustra/react-compiler-marker)
+- [Jetbrains Marketplace](https://plugins.jetbrains.com/plugin/29540-react-compiler-marker)
 - [React Compiler Documentation](https://react.dev/learn/react-compiler)
 
 ## Contributing

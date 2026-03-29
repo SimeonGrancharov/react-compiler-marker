@@ -1,7 +1,8 @@
 import { InlayHint, InlayHintKind, Position } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { LoggerEvent } from "./checkReactCompiler";
-import { supportsCommandLinks, isVSCodeClient } from "./clientUtils";
+import { parseLog } from "./parseLog";
+import { supportsCommandLinks, isVSCodeClient, supportsFixWithAI } from "./clientUtils";
 
 // Patterns that come first will be used first if possible
 const FUNCTION_PATTERNS = [
@@ -34,39 +35,6 @@ const fmt = {
     br2: () => "<br><br>",
   },
 } as const;
-
-function parseLog(log: LoggerEvent) {
-  // Helper function to get a value from multiple possible nested paths
-  const getLocValue = (
-    property: "start" | "end",
-    field: "line" | "column",
-    defaultValue: number
-  ) => {
-    return (
-      log.detail?.options?.details?.at(0)?.loc?.[property]?.[field] ??
-      log.detail?.options?.loc?.[property]?.[field] ??
-      log.detail?.loc?.[property]?.[field] ??
-      defaultValue
-    );
-  };
-
-  const startLine = getLocValue("start", "line", 1);
-  const endLine = getLocValue("end", "line", 1);
-  const startChar = getLocValue("start", "column", 0);
-  const endChar = getLocValue("end", "column", 0);
-
-  const reason = log?.detail?.options?.reason || "Unknown reason";
-  const description = log?.detail?.options?.description || "";
-
-  return {
-    startLine: Math.max(0, startLine - 1),
-    endLine: Math.max(0, endLine - 1),
-    startChar: Math.max(0, startChar),
-    endChar: Math.max(0, endChar),
-    reason,
-    description,
-  };
-}
 
 function getInlayHintPosition(
   document: TextDocument,
@@ -186,7 +154,7 @@ export function generateInlayHints(
       }
 
       // Add Fix with AI button for VSCode only
-      if (isVSCodeClient(clientName)) {
+      if (supportsFixWithAI(clientName)) {
         const filename = documentUri.startsWith("file://") ? documentUri.slice(7) : documentUri;
         const fixWithAICmd = `command:react-compiler-marker.fixWithAI?${encodeURIComponent(
           JSON.stringify({

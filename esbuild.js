@@ -5,6 +5,7 @@
  *   node esbuild.js                           - Build VS Code (dev mode)
  *   node esbuild.js --production              - Build VS Code (production)
  *   BUILD_TARGET=nvim node esbuild.js --production  - Build for Neovim
+ *   BUILD_TARGET=zed node esbuild.js --production   - Build for Zed
  *   node esbuild.js --watch                   - Watch mode for VS Code
  */
 const esbuild = require("esbuild");
@@ -60,19 +61,37 @@ async function main() {
 
   const contexts = [];
 
-  // Build the LSP server
-  const serverCtx = await esbuild.context({
-    ...sharedOptions,
-    entryPoints: [path.join(rootDir, "packages/server/src/server.ts")],
-    outfile: buildTarget === "nvim"
-      ? path.join(rootDir, "packages/nvim-client/server/server.bundle.js")
-      : path.join(rootDir, "packages/vscode-client/dist/server.js"),
-    external: [],
-  });
-  contexts.push(serverCtx);
+  // Build CLI
+  if (buildTarget === "cli") {
+    const cliCtx = await esbuild.context({
+      ...sharedOptions,
+      entryPoints: [path.join(rootDir, "packages/cli/src/main.ts")],
+      outfile: path.join(rootDir, "packages/cli/out/main.js"),
+      external: [],
+      alias: {
+        "@react-compiler-marker/server": path.join(rootDir, "packages/server"),
+      },
+    });
+    contexts.push(cliCtx);
+  }
 
-  // Build VS Code client extension if not nvim
-  if (buildTarget !== "nvim") {
+  // Build the LSP server (all targets except cli)
+  if (buildTarget !== "cli") {
+    const serverCtx = await esbuild.context({
+      ...sharedOptions,
+      entryPoints: [path.join(rootDir, "packages/server/src/server.ts")],
+      outfile: buildTarget === "zed"
+        ? path.join(rootDir, "packages/zed-client/server/server.bundle.js")
+        : buildTarget === "nvim"
+          ? path.join(rootDir, "packages/nvim-client/server/server.bundle.js")
+          : path.join(rootDir, "packages/vscode-client/dist/server.js"),
+      external: [],
+    });
+    contexts.push(serverCtx);
+  }
+
+  // Build VS Code client extension only for vscode target
+  if (buildTarget === "vscode") {
     const clientCtx = await esbuild.context({
       ...sharedOptions,
       entryPoints: [path.join(rootDir, "packages/vscode-client/src/extension.ts")],
